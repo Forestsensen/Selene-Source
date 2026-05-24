@@ -60,10 +60,11 @@ class _DLNADeviceDialogState extends State<DLNADeviceDialog> {
         _scanStatus = '正在扫描DLNA设备...';
       });
 
-      _dlnaManager = DLNAManager();
-      final manager = await _dlnaManager!.start();
+      final dlnaManager = DLNAManager();
+      _dlnaManager = dlnaManager;
+      final manager = await dlnaManager.start();
       if (!mounted || scanGeneration != _scanGeneration) {
-        manager.stop();
+        dlnaManager.stop();
         return;
       }
       
