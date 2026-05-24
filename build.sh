@@ -375,6 +375,7 @@ main() {
                 ;;
             --apple-only)
                 BUILD_ANDROID=false
+                PARALLEL_BUILD=false
                 shift
                 ;;
             --sequential)

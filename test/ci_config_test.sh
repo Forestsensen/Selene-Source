@@ -12,3 +12,8 @@ if ! grep -q "_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS" "$repo_root/
   echo "windows/CMakeLists.txt must suppress MSVC experimental coroutine deprecation errors"
   exit 1
 fi
+
+if ! awk '/--apple-only\)/,/shift/' "$repo_root/build.sh" | grep -q "PARALLEL_BUILD=false"; then
+  echo "build.sh must run Apple builds sequentially to avoid CocoaPods/header generation races"
+  exit 1
+fi
