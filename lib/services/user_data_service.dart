@@ -11,6 +11,7 @@ class UserDataService {
   static const String _preferSpeedTestKey = 'prefer_speed_test';
   static const String _localSearchKey = 'local_search';
   static const String _isLocalModeKey = 'is_local_mode';
+  static const String _adBlockEnabledKey = 'ad_block_enabled';
   
   // 内存缓存
   static bool? _isLocalModeCache;
@@ -256,5 +257,17 @@ class UserDataService {
   // 同步获取本地模式设置（从内存缓存读取）
   static bool getIsLocalModeSync() {
     return _isLocalModeCache ?? false;
+  }
+
+  // 保存去广告设置
+  static Future<void> saveAdBlockEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_adBlockEnabledKey, enabled);
+  }
+
+  // 获取去广告设置（默认为 true，开启去广告）
+  static Future<bool> getAdBlockEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_adBlockEnabledKey) ?? true;
   }
 }

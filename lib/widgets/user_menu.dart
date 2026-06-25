@@ -38,6 +38,7 @@ class _UserMenuState extends State<UserMenu> {
   bool _preferSpeedTest = true;
   bool _localSearch = false;
   bool _isLocalMode = false;
+  bool _adBlockEnabled = true;
 
   @override
   void initState() {
@@ -66,6 +67,7 @@ class _UserMenuState extends State<UserMenu> {
     final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
     final preferSpeedTest = await UserDataService.getPreferSpeedTest();
     final localSearch = await UserDataService.getLocalSearch();
+    final adBlockEnabled = await UserDataService.getAdBlockEnabled();
 
     if (mounted) {
       setState(() {
@@ -77,6 +79,7 @@ class _UserMenuState extends State<UserMenu> {
         _m3u8ProxyUrl = m3u8ProxyUrl;
         _preferSpeedTest = preferSpeedTest;
         _localSearch = localSearch;
+        _adBlockEnabled = adBlockEnabled;
       });
     }
   }
@@ -575,8 +578,9 @@ class _UserMenuState extends State<UserMenu> {
   Widget _buildToggleOption({
     required String title,
     required bool value,
-    required Future<void> Function(bool) onChanged,
+    required Future<void> Function(bool)? onChanged,
     required IconData icon,
+    String? subtitle,
   }) {
     return Material(
       color: Colors.transparent,
@@ -596,46 +600,72 @@ class _UserMenuState extends State<UserMenu> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                title,
-                style: FontUtils.poppins(
-                  fontSize: 16,
-                  color: widget.isDarkMode
-                      ? const Color(0xFFffffff)
-                      : const Color(0xFF1f2937),
-                  fontWeight: FontWeight.w500,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: FontUtils.poppins(
+                      fontSize: 16,
+                      color: onChanged == null
+                          ? (widget.isDarkMode
+                              ? const Color(0xFF6b7280)
+                              : const Color(0xFF9ca3af))
+                          : (widget.isDarkMode
+                              ? const Color(0xFFffffff)
+                              : const Color(0xFF1f2937)),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: FontUtils.poppins(
+                        fontSize: 12,
+                        color: widget.isDarkMode
+                            ? const Color(0xFF6b7280)
+                            : const Color(0xFF9ca3af),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             GestureDetector(
-              onTap: () async {
-                await onChanged(!value);
-                if (!mounted) return;
-                setState(() {});
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 44,
-                height: 24,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: value
-                      ? const Color(0xFF10b981)
-                      : (widget.isDarkMode
-                          ? const Color(0xFF374151)
-                          : const Color(0xFFe5e7eb)),
-                ),
-                child: AnimatedAlign(
+              onTap: onChanged == null
+                  ? null
+                  : () async {
+                      await onChanged!(!value);
+                      if (!mounted) return;
+                      setState(() {});
+                    },
+              child: Opacity(
+                opacity: onChanged == null ? 0.4 : 1.0,
+                child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  alignment:
-                      value ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    width: 20,
-                    height: 20,
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
+                  width: 44,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: value
+                        ? const Color(0xFF10b981)
+                        : (widget.isDarkMode
+                            ? const Color(0xFF374151)
+                            : const Color(0xFFe5e7eb)),
+                  ),
+                  child: AnimatedAlign(
+                    duration: const Duration(milliseconds: 200),
+                    alignment:
+                        value ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -794,6 +824,31 @@ class _UserMenuState extends State<UserMenu> {
                       currentValue: _m3u8ProxyUrl,
                       onTap: _showM3u8ProxyUrlDialog,
                       icon: LucideIcons.link,
+                    ),
+                    // 分割线
+                    Container(
+                      height: 1,
+                      color: widget.isDarkMode
+                          ? const Color(0xFF374151)
+                          : const Color(0xFFe5e7eb),
+                    ),
+                    // 内置去广告选项
+                    _buildToggleOption(
+                      title: '内置去广告',
+                      value: _adBlockEnabled,
+                      subtitle: _m3u8ProxyUrl.isNotEmpty
+                          ? '已设置外部代理，此选项无效'
+                          : '自动过滤 M3U8 广告片段',
+                      onChanged: _m3u8ProxyUrl.isNotEmpty
+                          ? null
+                          : (value) async {
+                              await UserDataService.saveAdBlockEnabled(value);
+                              if (!mounted) return;
+                              setState(() {
+                                _adBlockEnabled = value;
+                              });
+                            },
+                      icon: LucideIcons.shieldCheck,
                     ),
                     // 分割线
                     Container(
