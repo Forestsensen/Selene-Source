@@ -30,9 +30,7 @@ jobs:
         continue-on-error: true
 
       - name: Get dependencies
-        run: |
-          rm -f pubspec.lock
-          flutter pub get
+        run: flutter pub get
 
       - name: Install CocoaPods
         run: |
