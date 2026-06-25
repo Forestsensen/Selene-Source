@@ -8,7 +8,6 @@ on:
       - 'lib/**'
       - 'ios/**'
       - 'pubspec.yaml'
-      - 'pubspec.lock'
 
 jobs:
   build-ios:
@@ -31,7 +30,9 @@ jobs:
         continue-on-error: true
 
       - name: Get dependencies
-        run: flutter pub get
+        run: |
+          rm -f pubspec.lock
+          flutter pub get
 
       - name: Install CocoaPods
         run: |
