@@ -668,16 +668,16 @@ class _PlayerScreenState extends State<PlayerScreen>
         finalUrl = '$m3u8ProxyUrl$encodedUrl';
         print("使用外部 M3U8 代理: $finalUrl");
       } else if (adBlockEnabled && _isM3U8Url(newUrl)) {
-        // 通过后端 /api/proxy/m3u8 代理播放，后端会自动过滤广告
+        // 通过后端 /api/proxy/filter-m3u8 过滤广告
+        // 只过滤 M3U8 内容，分片仍从源站直连，不走代理
         final serverUrl = await UserDataService.getServerUrl();
         if (serverUrl != null && serverUrl.isNotEmpty) {
           final encodedUrl = Uri.encodeComponent(newUrl);
-          // 去掉 serverUrl 末尾的 /（如果有）
           final cleanServer = serverUrl.endsWith('/')
               ? serverUrl.substring(0, serverUrl.length - 1)
               : serverUrl;
-          finalUrl = '$cleanServer/api/proxy/m3u8?url=$encodedUrl';
-          print("使用后端代理（内置去广告）: $finalUrl");
+          finalUrl = '$cleanServer/api/proxy/filter-m3u8?url=$encodedUrl';
+          print("使用后端去广告过滤: $finalUrl");
         }
       }
 
