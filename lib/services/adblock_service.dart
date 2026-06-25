@@ -1,366 +1,164 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
-/// 内置 M3U8 广告拦截服务
+/// 内置 M3U8 广告过滤服务
 ///
-/// 通过本地 HTTP 代理服务器拦截 M3U8 请求，
-/// 解析播放列表并移除广告片段，返回干净的播放列表。
-/// 替代外部 U3M8 代理方案。
+/// 在 App 内部预取 M3U8 内容，过滤广告片段，保存为本地临时文件。
+/// media_kit 播放本地文件，分片仍从源站直连。
 class AdBlockService {
-  static AdBlockService? _instance;
-  static AdBlockService get instance => _instance ??= AdBlockService._();
+  static final AdBlockService _instance = AdBlockService._();
+  static AdBlockService get instance => _instance;
 
   AdBlockService._();
 
-  HttpServer? _proxyServer;
-  int _proxyPort = 0;
   final Dio _dio = Dio();
 
-  // 已知的广告域名模式
-  static final List<RegExp> _adDomainPatterns = [
-    RegExp(r'ads?\.', caseSensitive: false),
-    RegExp(r'adserver', caseSensitive: false),
-    RegExp(r'adbreak', caseSensitive: false),
-    RegExp(r'doubleclick\.net', caseSensitive: false),
-    RegExp(r'googlesyndication', caseSensitive: false),
-    RegExp(r'googleadservices', caseSensitive: false),
-    RegExp(r'adsterra', caseSensitive: false),
-    RegExp(r'propellerads', caseSensitive: false),
-    RegExp(r'popads', caseSensitive: false),
-    RegExp(r'revive-adserver', caseSensitive: false),
-    RegExp(r'advert', caseSensitive: false),
-    RegExp(r'banner\.', caseSensitive: false),
-    RegExp(r'sponsor', caseSensitive: false),
-    RegExp(r'mediaad\.org', caseSensitive: false),
-    RegExp(r'adblock', caseSensitive: false),
+  // 爱奇艺/猫眼等特定平台广告特征
+  static const List<String> _adKeywords = [
+    'cupid.iqiyi.com',
+    'afp.iqiyi.com',
+    'ad.m.iqiyi.com',
+    'policy.video.iqiyi.com',
+    't7.cupid.iqiyi.com',
+    'ad.maoyan.com',
+    'analytics.maoyan.com',
+    'maoyan.com/advert',
+    'maoyan.com/tracking',
+    'analytics.meituan',
+    'stat.mafengwo',
+    'meituan.com/advert',
+    'meituan.com/tracking',
+    's3plus.meituan.com',
+    'report.meituan.com',
+    'pre_roll',
+    'mid_roll',
+    'post_roll',
+    'preroll',
+    'midroll',
+    'postroll',
+    'doubleclick.net',
+    'googlesyndication.com',
+    'adservice.google.com',
   ];
 
-  // 广告相关 URL 路径模式
-  static final List<RegExp> _adPathPatterns = [
-    RegExp(r'/ad[s]?/', caseSensitive: false),
-    RegExp(r'/advert', caseSensitive: false),
-    RegExp(r'/commercial/', caseSensitive: false),
-    RegExp(r'/sponsor/', caseSensitive: false),
-    RegExp(r'/banner/', caseSensitive: false),
-    RegExp(r'/preroll/', caseSensitive: false),
-    RegExp(r'/midroll/', caseSensitive: false),
-    RegExp(r'/postroll/', caseSensitive: false),
-    RegExp(r'/ad-?segment', caseSensitive: false),
-    RegExp(r'/ad_?break', caseSensitive: false),
-  ];
-
-  /// 获取本地代理服务器地址
-  String get proxyUrl {
-    if (_proxyPort == 0) return '';
-    return 'http://127.0.0.1:$_proxyPort';
-  }
-
-  /// 启动本地代理服务器
-  Future<void> startProxy() async {
-    if (_proxyServer != null) return;
-
+  /// 预取 M3U8 内容，过滤广告，返回本地文件路径
+  /// 如果过滤失败或无需过滤，返回原始 URL
+  Future<String> filterM3U8(String m3u8Url) async {
     try {
-      _proxyServer = await HttpServer.bind('127.0.0.1', 0);
-      _proxyPort = _proxyServer!.port;
-
-      debugPrint('[AdBlock] 本地代理服务器启动: http://127.0.0.1:$_proxyPort');
-
-      _proxyServer!.listen((HttpRequest request) async {
-        await _handleRequest(request);
-      });
-    } catch (e) {
-      debugPrint('[AdBlock] 启动代理服务器失败: $e');
-      _proxyServer = null;
-      _proxyPort = 0;
-    }
-  }
-
-  /// 停止本地代理服务器
-  Future<void> stopProxy() async {
-    if (_proxyServer != null) {
-      await _proxyServer!.close(force: true);
-      _proxyServer = null;
-      _proxyPort = 0;
-      debugPrint('[AdBlock] 本地代理服务器已停止');
-    }
-  }
-
-  /// 处理代理请求
-  Future<void> _handleRequest(HttpRequest request) async {
-    try {
-      final uri = request.uri;
-      final targetUrl = uri.queryParameters['url'];
-
-      if (targetUrl == null || targetUrl.isEmpty) {
-        request.response
-          ..statusCode = 400
-          ..write('Missing url parameter')
-          ..close();
-        return;
-      }
-
-      debugPrint('[AdBlock] 代理请求: $targetUrl');
-
-      // 获取原始内容
+      // 获取 M3U8 内容
       final response = await _dio.get(
-        targetUrl,
+        m3u8Url,
         options: Options(
           responseType: ResponseType.plain,
           headers: {
             'User-Agent':
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Referer': _extractBaseUrl(targetUrl),
           },
-          followRedirects: true,
-          validateStatus: (status) => status != null && status < 500,
+          receiveTimeout: const Duration(seconds: 10),
         ),
       );
 
       final content = response.data as String;
 
-      // 判断是否为 M3U8 内容
-      if (_isM3U8Content(content)) {
-        final cleanedContent = _filterM3U8Content(content, targetUrl);
-        debugPrint('[AdBlock] M3U8 内容已过滤');
-
-        request.response
-          ..statusCode = 200
-          ..headers.contentType = ContentType.parse('application/vnd.apple.mpegurl')
-          ..headers.set('Access-Control-Allow-Origin', '*')
-          ..headers.set('Cache-Control', 'no-cache')
-          ..write(cleanedContent)
-          ..close();
-      } else {
-        // 非 M3U8 内容，直接透传
-        request.response
-          ..statusCode = 200
-          ..headers.set('Access-Control-Allow-Origin', '*')
-          ..write(content)
-          ..close();
+      // 检查是否为 M3U8 内容
+      if (!content.trim().startsWith('#EXTM3U')) {
+        debugPrint('[AdBlock] 非 M3U8 内容，跳过过滤');
+        return m3u8Url;
       }
+
+      // 检查是否为 master playlist（包含多个质量变体）
+      if (content.contains('#EXT-X-STREAM-INF:')) {
+        // master playlist 不需要过滤广告，直接返回
+        // 广告过滤在 media playlist 层级进行
+        debugPrint('[AdBlock] Master playlist，跳过过滤');
+        return m3u8Url;
+      }
+
+      // 过滤广告片段
+      final filteredContent = _filterAds(content);
+
+      if (filteredContent == content) {
+        // 没有广告被过滤，返回原始 URL
+        debugPrint('[AdBlock] 无广告片段，使用原始 URL');
+        return m3u8Url;
+      }
+
+      // 保存到临时文件
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File(
+          '${tempDir.path}/selene_adblock_${DateTime.now().millisecondsSinceEpoch}.m3u8');
+      await tempFile.writeAsString(filteredContent);
+
+      debugPrint('[AdBlock] 已过滤广告，保存到: ${tempFile.path}');
+      return tempFile.path;
     } catch (e) {
-      debugPrint('[AdBlock] 代理请求失败: $e');
-      try {
-        request.response
-          ..statusCode = 502
-          ..write('Proxy error: $e')
-          ..close();
-      } catch (_) {}
+      debugPrint('[AdBlock] 过滤失败，使用原始 URL: $e');
+      return m3u8Url;
     }
   }
 
-  /// 判断内容是否为 M3U8 格式
-  bool _isM3U8Content(String content) {
-    final trimmed = content.trim();
-    return trimmed.startsWith('#EXTM3U') ||
-        trimmed.contains('#EXT-X-VERSION') ||
-        trimmed.contains('#EXT-X-TARGETDURATION') ||
-        trimmed.contains('#EXT-X-STREAM-INF');
-  }
-
-  /// 过滤 M3U8 内容中的广告片段
-  String _filterM3U8Content(String content, String baseUrl) {
+  /// 过滤 M3U8 中的广告片段
+  String _filterAds(String content) {
     final lines = content.split('\n');
     final result = <String>[];
-    bool inAdBlock = false;
-    int removedSegments = 0;
 
-    // 先检查是否为主播放列表（master playlist）
-    bool isMasterPlaylist = false;
-    for (final line in lines) {
-      if (line.trim().startsWith('#EXT-X-STREAM-INF:')) {
-        isMasterPlaylist = true;
-        break;
-      }
-    }
-
-    // 如果是主播放列表，通过本地代理重写子播放列表 URL
-    if (isMasterPlaylist) {
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty || trimmed.startsWith('#')) {
-          result.add(line);
-        } else {
-          // 这是子播放列表的 URL，通过代理重写
-          final absoluteUrl = _resolveUrl(trimmed, baseUrl);
-          result.add('$proxyUrl/proxy?url=${Uri.encodeComponent(absoluteUrl)}');
-        }
-      }
-      return result.join('\n');
-    }
-
-    // 媒体播放列表（media playlist）- 过滤广告片段
-    for (int i = 0; i < lines.length; i++) {
+    int i = 0;
+    while (i < lines.length) {
       final line = lines[i];
-      final trimmed = line.trim();
 
-      // 检测广告起始标记
-      if (_isAdStartMarker(trimmed)) {
-        inAdBlock = true;
-        removedSegments++;
+      // 跳过 #EXT-X-DISCONTINUITY 标识
+      if (line.contains('#EXT-X-DISCONTINUITY')) {
+        i++;
         continue;
       }
 
-      // 检测广告结束标记
-      if (_isAdEndMarker(trimmed)) {
-        inAdBlock = false;
-        continue;
-      }
+      // 如果是 EXTINF 行，检查下一行 URL 是否包含广告关键字
+      if (line.contains('#EXTINF:')) {
+        if (i + 1 < lines.length) {
+          final nextLine = lines[i + 1].toLowerCase();
+          final containsAd = _adKeywords.any(
+            (keyword) => nextLine.contains(keyword.toLowerCase()),
+          );
 
-      // 在广告块内，跳过所有内容
-      if (inAdBlock) {
-        continue;
-      }
-
-      // 检测独立的广告片段（基于 URL 模式）
-      if (_isAdSegment(trimmed, lines, i)) {
-        // 跳过当前行和前一行（通常是 #EXTINF）
-        if (result.isNotEmpty &&
-            result.last.trim().startsWith('#EXTINF')) {
-          result.removeLast();
+          if (containsAd) {
+            debugPrint('[AdBlock] 过滤广告片段: ${lines[i + 1]}');
+            i += 2; // 跳过 EXTINF 和 URL 行
+            continue;
+          }
         }
-        removedSegments++;
-        continue;
       }
 
       result.add(line);
-    }
-
-    if (removedSegments > 0) {
-      debugPrint('[AdBlock] 已移除 $removedSegments 个广告片段');
+      i++;
     }
 
     return result.join('\n');
   }
 
-  /// 检测广告起始标记
-  bool _isAdStartMarker(String line) {
-    // SCTE-35 广告插入标记
-    if (line.startsWith('#EXT-X-CUE-OUT')) return true;
-    if (line.startsWith('#EXT-X-SCTE35')) return true;
-    if (line.startsWith('#EXT-X-SCTE-OUT')) return true;
+  /// 清理过期的临时文件
+  Future<void> cleanupTempFiles() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final files = tempDir.listSync();
+      final now = DateTime.now();
 
-    // 广告 DATERANGE 标记
-    if (line.startsWith('#EXT-X-DATERANGE') &&
-        (line.contains('CLASS="ad"') ||
-            line.contains('CLASS="commercial"') ||
-            line.contains('SCTE35-OUT'))) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /// 检测广告结束标记
-  bool _isAdEndMarker(String line) {
-    if (line.startsWith('#EXT-X-CUE-IN')) return true;
-    if (line.startsWith('#EXT-X-SCTE-IN')) return true;
-
-    // DATERANGE 广告结束
-    if (line.startsWith('#EXT-X-DATERANGE') &&
-        line.contains('SCTE35-IN')) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /// 检测单个广告片段
-  bool _isAdSegment(String line, List<String> allLines, int currentIndex) {
-    // 跳过空行和注释
-    if (line.isEmpty || line.startsWith('#')) return false;
-
-    // 检查 URL 是否匹配广告域名模式
-    for (final pattern in _adDomainPatterns) {
-      if (pattern.hasMatch(line)) {
-        debugPrint('[AdBlock] 匹配广告域名: $line');
-        return true;
-      }
-    }
-
-    // 检查 URL 是否匹配广告路径模式
-    for (final pattern in _adPathPatterns) {
-      if (pattern.hasMatch(line)) {
-        debugPrint('[AdBlock] 匹配广告路径: $line');
-        return true;
-      }
-    }
-
-    // 检查 URL 是否包含明显的广告关键词
-    final lowerLine = line.toLowerCase();
-    if (lowerLine.contains('/ad/') ||
-        lowerLine.contains('/ads/') ||
-        lowerLine.contains('/advert') ||
-        lowerLine.contains('adsegment') ||
-        lowerLine.contains('ad_break') ||
-        lowerLine.contains('preroll') ||
-        lowerLine.contains('midroll') ||
-        lowerLine.contains('postroll')) {
-      debugPrint('[AdBlock] 匹配广告关键词: $line');
-      return true;
-    }
-
-    // 检查前一行的 EXTINF 时长 - 极短的片段通常是广告
-    if (currentIndex > 0) {
-      final prevLine = allLines[currentIndex - 1].trim();
-      if (prevLine.startsWith('#EXTINF:')) {
-        final durationStr =
-            prevLine.substring('#EXTINF:'.length).split(',').first.trim();
-        final duration = double.tryParse(durationStr);
-        if (duration != null && duration > 0 && duration <= 5.0) {
-          // 5秒以下的片段很可能是广告，但要结合上下文判断
-          // 检查是否在非广告区域（如果是第一个或最后一个片段，不一定是广告）
-          if (currentIndex > 2 && currentIndex < allLines.length - 2) {
-            // 检查前后是否有 discontinuity（广告标志）
-            bool hasDiscontinuity = false;
-            for (int j = currentIndex - 3; j >= 0 && j >= currentIndex - 5; j--) {
-              if (allLines[j].trim().startsWith('#EXT-X-DISCONTINUITY')) {
-                hasDiscontinuity = true;
-                break;
-              }
-            }
-            if (hasDiscontinuity) {
-              debugPrint('[AdBlock] 匹配短时长+discontinuity: ${duration}s');
-              return true;
-            }
+      for (final file in files) {
+        if (file is File && file.path.contains('selene_adblock_')) {
+          final stat = await file.stat();
+          final age = now.difference(stat.modified);
+          if (age.inMinutes > 30) {
+            await file.delete();
           }
         }
       }
-    }
-
-    return false;
-  }
-
-  /// 解析相对 URL 为绝对 URL
-  String _resolveUrl(String url, String baseUrl) {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-
-    final baseUri = Uri.parse(baseUrl);
-    if (url.startsWith('/')) {
-      return '${baseUri.scheme}://${baseUri.host}'
-          '${baseUri.hasPort ? ':${baseUri.port}' : ''}$url';
-    } else {
-      final basePath =
-          baseUri.path.substring(0, baseUri.path.lastIndexOf('/') + 1);
-      return '${baseUri.scheme}://${baseUri.host}'
-          '${baseUri.hasPort ? ':${baseUri.port}' : ''}$basePath$url';
+    } catch (e) {
+      debugPrint('[AdBlock] 清理临时文件失败: $e');
     }
   }
 
-  /// 提取 baseUrl（scheme + host + port）
-  String _extractBaseUrl(String url) {
-    final uri = Uri.parse(url);
-    return '${uri.scheme}://${uri.host}${uri.hasPort ? ':${uri.port}' : ''}';
-  }
-
-  /// 释放资源
   void dispose() {
-    stopProxy();
     _dio.close();
   }
 }

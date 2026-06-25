@@ -10,6 +10,7 @@ import '../services/m3u8_service.dart';
 import '../services/douban_service.dart';
 import '../services/user_data_service.dart';
 import '../services/search_service.dart';
+import '../services/adblock_service.dart';
 import '../models/search_result.dart';
 import '../models/douban_movie.dart';
 import '../models/play_record.dart';
@@ -655,15 +656,23 @@ class _PlayerScreenState extends State<PlayerScreen>
   Future<void> updateVideoUrl(String newUrl, {Duration? startAt}) async {
     print("newUrl: $newUrl, startAt: $startAt");
     try {
-      // 获取 M3U8 代理 URL
+      // 获取 M3U8 代理 URL（外部手动配置）
       final m3u8ProxyUrl = await UserDataService.getM3u8ProxyUrl();
+      // 获取内置去广告开关
+      final adBlockEnabled = await UserDataService.getAdBlockEnabled();
 
-      // 如果代理 URL 不为空，则将 newUrl encode 后拼接到代理 URL 后面
       String finalUrl = newUrl;
+
       if (m3u8ProxyUrl.isNotEmpty) {
+        // 优先使用外部 M3U8 代理
         final encodedUrl = Uri.encodeComponent(newUrl);
         finalUrl = '$m3u8ProxyUrl$encodedUrl';
-        print("使用 M3U8 代理: $finalUrl");
+        print("使用外部 M3U8 代理: $finalUrl");
+      } else if (adBlockEnabled && _isM3U8Url(newUrl)) {
+        // 内置去广告：预取 M3U8 → 过滤广告 → 保存本地文件 → 播放本地文件
+        print("使用内置去广告过滤...");
+        finalUrl = await AdBlockService.instance.filterM3U8(newUrl);
+        print("去广告后 URL: $finalUrl");
       }
 
       if (_isCasting) {
@@ -688,6 +697,15 @@ class _PlayerScreenState extends State<PlayerScreen>
     } catch (e) {
       // 静默处理错误
     }
+  }
+
+  /// 判断 URL 是否为 M3U8 流媒体地址
+  bool _isM3U8Url(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('.m3u8') ||
+        lower.contains('/m3u8') ||
+        lower.contains('format=m3u8') ||
+        lower.contains('type=m3u8');
   }
 
   /// 跳转到指定进度
