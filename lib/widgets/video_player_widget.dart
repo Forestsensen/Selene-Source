@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pip/pip.dart';
@@ -507,7 +508,19 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget>
                         state: state,
                         onControlsVisibilityChanged: (_) {},
                         onBackPressed: widget.onBackPressed,
-                        onFullscreenChange: (_) {},
+                        onFullscreenChange: (isFullscreen) {
+                          if (isFullscreen) {
+                            SystemChrome.setPreferredOrientations([
+                              DeviceOrientation.landscapeLeft,
+                              DeviceOrientation.landscapeRight,
+                            ]);
+                          } else {
+                            SystemChrome.setPreferredOrientations([
+                              DeviceOrientation.portraitUp,
+                              DeviceOrientation.portraitDown,
+                            ]);
+                          }
+                        },
                         onNextEpisode: widget.onNextEpisode,
                         onPause: widget.onPause,
                         videoUrl: _currentUrl ?? '',
