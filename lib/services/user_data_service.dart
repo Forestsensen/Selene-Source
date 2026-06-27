@@ -12,6 +12,7 @@ class UserDataService {
   static const String _localSearchKey = 'local_search';
   static const String _isLocalModeKey = 'is_local_mode';
   static const String _adBlockEnabledKey = 'ad_block_enabled';
+  static const String _skipConfigPrefix = 'skip_config_';
   
   // 内存缓存
   static bool? _isLocalModeCache;
@@ -269,5 +270,30 @@ class UserDataService {
   static Future<bool> getAdBlockEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_adBlockEnabledKey) ?? true;
+  }
+
+  // 保存跳过片头片尾配置（按剧集 ID 存储）
+  // introSeconds: 片头跳过秒数 (0 = 不跳过)
+  // outroSeconds: 片尾跳过秒数 (0 = 不跳过，表示距离结尾多少秒自动跳下一集)
+  static Future<void> saveSkipConfig(String showId, int introSeconds, int outroSeconds) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_skipConfigPrefix$showId', '$introSeconds,$outroSeconds');
+  }
+
+  // 获取跳过片头片尾配置
+  // 返回 [introSeconds, outroSeconds]
+  static Future<List<int>> getSkipConfig(String showId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString('$_skipConfigPrefix$showId');
+    if (value == null || value.isEmpty) return [0, 0];
+    final parts = value.split(',');
+    if (parts.length != 2) return [0, 0];
+    return [int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0];
+  }
+
+  // 删除跳过片头片尾配置
+  static Future<void> deleteSkipConfig(String showId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_skipConfigPrefix$showId');
   }
 }

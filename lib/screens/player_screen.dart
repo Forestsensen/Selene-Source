@@ -128,6 +128,12 @@ class _PlayerScreenState extends State<PlayerScreen>
   // 网页全屏状态
   bool _isWebFullscreen = false;
 
+  // 跳过片头片尾状态
+  int _skipIntroSeconds = 0; // 片头跳过秒数
+  int _skipOutroSeconds = 0; // 片尾跳过秒数（距离结尾多少秒跳下一集）
+  bool _showSkipIntroButton = false; // 是否显示"跳过片头"按钮
+  bool _skipIntroHandled = false; // 当前集是否已处理过片头跳过
+
   // 播放器的 GlobalKey，用于保持播放器状态
   final GlobalKey _playerKey = GlobalKey();
   int _loadGeneration = 0;
@@ -320,6 +326,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (mounted) {
       setState(() {
         currentEpisodeIndex = targetIndex;
+        _skipIntroHandled = false; // 切集时重置片头跳过标记
+        _showSkipIntroButton = false;
+        _skipOutroTriggered = false; // 切集时重置片尾跳过标记
       });
     }
     // 重置上次保存的位置，因为切换了集数
@@ -339,6 +348,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     currentSource = detail.source;
     currentID = detail.id;
     totalEpisodes = detail.episodes.length;
+
+    // 加载跳过片头片尾配置
+    _loadSkipConfig();
 
     // 保存旧的豆瓣ID用于比较
     int oldVideoDoubanID = videoDoubanID;
@@ -732,6 +744,19 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
   }
 
+  /// 加载跳过片头片尾配置
+  Future<void> _loadSkipConfig() async {
+    if (currentID.isEmpty) return;
+    final config = await UserDataService.getSkipConfig(currentID);
+    if (mounted) {
+      setState(() {
+        _skipIntroSeconds = config[0];
+        _skipOutroSeconds = config[1];
+      });
+    }
+    debugPrint('跳过片头片尾配置: intro=$_skipIntroSeconds, outro=$_skipOutroSeconds');
+  }
+
   /// 处理视频播放器 ready 事件
   void _onVideoPlayerReady() {
     if (!mounted) return;
@@ -759,6 +784,27 @@ class _PlayerScreenState extends State<PlayerScreen>
           seekToProgress(tmpStartAt);
         }
       });
+    } else {
+      // 非恢复播放，显示跳过片头按钮
+      _showSkipIntroOverlay();
+    }
+  }
+
+  /// 显示跳过片头按钮（10 秒后自动隐藏）
+  void _showSkipIntroOverlay() {
+    if (_skipIntroSeconds > 0 && !_skipIntroHandled) {
+      _skipIntroHandled = true;
+      setState(() {
+        _showSkipIntroButton = true;
+      });
+      // 10 秒后自动隐藏
+      Future.delayed(const Duration(seconds: 10), () {
+        if (mounted) {
+          setState(() {
+            _showSkipIntroButton = false;
+          });
+        }
+      });
     }
   }
 
@@ -781,6 +827,28 @@ class _PlayerScreenState extends State<PlayerScreen>
   void _onVideoProgressUpdate() {
     // 检查并保存进度（基于时间间隔）
     _checkAndSaveProgress();
+
+    // 检查是否需要跳过片尾（自动下一集）
+    _checkSkipOutro();
+  }
+
+  /// 检查片尾跳过
+  bool _skipOutroTriggered = false;
+  void _checkSkipOutro() {
+    if (_skipOutroSeconds <= 0 || _skipOutroTriggered) return;
+    if (_videoPlayerController == null) return;
+
+    final position = _videoPlayerController!.currentPosition;
+    final duration = _videoPlayerController!.duration;
+
+    if (position == null || duration == null || duration.inSeconds <= 0) return;
+
+    final remaining = duration.inSeconds - position.inSeconds;
+    if (remaining <= _skipOutroSeconds && remaining > 0) {
+      _skipOutroTriggered = true;
+      debugPrint('片尾跳过: 剩余 $remaining 秒，自动下一集');
+      _onNextEpisode();
+    }
   }
 
   /// 处理下一集按钮点击
@@ -1111,6 +1179,42 @@ class _PlayerScreenState extends State<PlayerScreen>
                 _isWebFullscreen = isWebFullscreen;
               });
             },
+          ),
+        // 跳过片头按钮（新集开始后 10 秒内可见）
+        if (!_isCasting && _showSkipIntroButton && _skipIntroSeconds > 0)
+          Positioned(
+            top: 40,
+            right: 16,
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _showSkipIntroButton = false;
+                });
+                seekToProgress(Duration(seconds: _skipIntroSeconds));
+              },
+              onLongPress: () {
+                _showSkipConfigDialog();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white30, width: 0.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.fast_forward, color: Colors.white, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      '跳过片头 ${_skipIntroSeconds}s',
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         if (_isCasting && _dlnaDevice != null)
           DLNAPlayer(
@@ -1623,6 +1727,36 @@ class _PlayerScreenState extends State<PlayerScreen>
               ),
 
               const Spacer(),
+
+              // 跳过片头片尾设置按钮
+              _HoverButton(
+                onTap: _showSkipConfigDialog,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.skip_next_rounded,
+                      size: 16,
+                      color: (_skipIntroSeconds > 0 || _skipOutroSeconds > 0)
+                          ? Colors.blue
+                          : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
+                    ),
+                    const SizedBox(width: 2),
+                    Text(
+                      '跳过',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: (_skipIntroSeconds > 0 || _skipOutroSeconds > 0)
+                            ? Colors.blue
+                            : (isDarkMode ? Colors.grey[400] : Colors.grey[600]),
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 12),
 
               // 滚动到当前集数按钮
               Transform.translate(
@@ -3021,6 +3155,91 @@ class _PlayerScreenState extends State<PlayerScreen>
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 显示跳过片头片尾设置弹窗
+  void _showSkipConfigDialog() {
+    final introController = TextEditingController(
+      text: _skipIntroSeconds > 0 ? _skipIntroSeconds.toString() : '',
+    );
+    final outroController = TextEditingController(
+      text: _skipOutroSeconds > 0 ? _skipOutroSeconds.toString() : '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('跳过片头片尾'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: introController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '片头跳过（秒）',
+                hintText: '如 90，填 0 或留空表示不跳过',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: outroController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '片尾跳过（秒）',
+                hintText: '如 30，表示结尾前 30 秒自动下一集',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '设置针对"${videoTitle}"生效，所有集数通用',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              // 清除配置
+              await UserDataService.deleteSkipConfig(currentID);
+              if (mounted) {
+                setState(() {
+                  _skipIntroSeconds = 0;
+                  _skipOutroSeconds = 0;
+                });
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('清除', style: TextStyle(color: Colors.red)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final intro = int.tryParse(introController.text) ?? 0;
+              final outro = int.tryParse(outroController.text) ?? 0;
+              await UserDataService.saveSkipConfig(currentID, intro, outro);
+              if (mounted) {
+                setState(() {
+                  _skipIntroSeconds = intro;
+                  _skipOutroSeconds = outro;
+                  _skipOutroTriggered = false;
+                });
+              }
+              Navigator.pop(ctx);
+              if (intro > 0 || outro > 0) {
+                _showToast('已保存：片头 ${intro}s，片尾 ${outro}s');
+              }
+            },
+            child: const Text('保存'),
           ),
         ],
       ),

@@ -846,6 +846,41 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
                     ),
                   ),
                 ),
+                if (!widget.live)
+                  GestureDetector(
+                    onTap: () {
+                      _onUserInteraction();
+                      final newPos = _position - const Duration(seconds: 15);
+                      widget.player.seek(newPos.isNegative ? Duration.zero : newPos);
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.replay_10,
+                        color: Colors.white,
+                        size: _isFullscreen ? 26 : 22,
+                      ),
+                    ),
+                  ),
+                if (!widget.live)
+                  GestureDetector(
+                    onTap: () {
+                      _onUserInteraction();
+                      final newPos = _position + const Duration(seconds: 15);
+                      final maxPos = _duration;
+                      widget.player.seek(newPos > maxPos ? maxPos : newPos);
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.forward_10,
+                        color: Colors.white,
+                        size: _isFullscreen ? 26 : 22,
+                      ),
+                    ),
+                  ),
                 if (!widget.isLastEpisode && !widget.live)
                   GestureDetector(
                     onTap: () {
